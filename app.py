@@ -11,7 +11,7 @@ plt.style.use('dark_background')
 st.set_page_config(page_title="Simulatore FV Completo", layout="wide")
 
 st.title("☀️ Modello Termo-Elettrico Modulo Fotovoltaico")
-st.markdown("Simulatore avanzato fedele al modello MATLAB originale con risoluzione integrale di Fourier e condizioni di Robin.")
+st.markdown("Simulatore avanzato con risoluzione integrale di Fourier e condizioni al contorno di Robin.")
 
 # =========================================================================
 # 1. FUNZIONI MATEMATICHE DI BACKGROUND
