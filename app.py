@@ -10,8 +10,14 @@ from mpl_toolkits.mplot3d import Axes3D
 plt.style.use('dark_background')
 st.set_page_config(page_title="Simulatore FV Completo", layout="wide")
 
-st.title("☀️ Modello Termo-Elettrico Modulo Fotovoltaico")
-st.markdown("Simulatore avanzato  con risoluzione integrale di Fourier e condizioni al contorno di Robin.")
+# =========================================================================
+# INITIALIZE SESSION STATE PER LA CRONOLOGIA SIMULAZIONI
+# =========================================================================
+if 'history' not in st.session_state:
+    st.session_state['history'] = []
+
+st.title("☀️ Modello Termo-Elettrico Modulo Fotovoltaico (Multi-Ombra & History)")
+st.markdown("Simulatore avanzato fedele al modello MATLAB originale con supporto per l'oscuramento multiplo e confronto storico dei risultati.")
 
 # =========================================================================
 # 1. FUNZIONI MATEMATICHE DI BACKGROUND
@@ -76,7 +82,6 @@ def calcola_somme_fourier(x_g_vec, y_g_vec, cellex, celley, xm, ym, n, m, Uk, Ut
 
 @st.cache_data
 def calcola_soluzione_analitica_globale(xg, yg, Sole, cellex, celley, xm, ym, n, m, Uk, Ut, h, Ta, kT, qohm, dx_m, dy_m):
-    # Traduzione della funzione MATLAB "soluzione_analitica_globale"
     Tsol = np.zeros_like(xg)
     Tohm = np.zeros_like(xg)
     Trobin = np.zeros_like(xg)
@@ -183,10 +188,15 @@ def esegui_simulazione_completa(p):
     
     while err > p['toll'] and iii < p['itmax']:
         Sole = QSOL * np.ones_like(xg) * (1 - eta)
-        if p['ombra_attiva']:
-            ixi, fxi = np.searchsorted(x_g_vec, iniziocx[p['col_ombra']-1]), np.searchsorted(x_g_vec, finecx[p['col_ombra']-1])
-            iyi, fyi = np.searchsorted(y_g_vec, iniziocy[p['riga_ombra']-1]), np.searchsorted(y_g_vec, finecy[p['riga_ombra']-1])
-            Sole[iyi:fyi, ixi:fxi] = p['fattore_sole'] * QSOL * (1 - eta)
+        
+        # LOGICA OMBREGGIAMENTO MULTIPLO (Ciclo su tutte le coordinate scelte)
+        if p['ombra_attiva'] and p['celle_oscurate']:
+            for (r_o, c_o) in p['celle_oscurate']:
+                ixi = np.searchsorted(x_g_vec, iniziocx[c_o-1])
+                fxi = np.searchsorted(x_g_vec, finecx[c_o-1])
+                iyi = np.searchsorted(y_g_vec, iniziocy[r_o-1])
+                fyi = np.searchsorted(y_g_vec, finecy[r_o-1])
+                Sole[iyi:fyi, ixi:fxi] = p['fattore_sole'] * QSOL * (1 - eta)
             
         interpolator_sole = RegularGridInterpolator((y_g_vec, x_g_vec), Sole, bounds_error=False, fill_value=None)
         
@@ -226,19 +236,19 @@ def esegui_simulazione_completa(p):
         eta = eta_new
         iii += 1
         
-    # --- CALCOLO FINALE ANALITICO SU TUTTA LA GRIGLIA COME IN MATLAB ---
+    # --- CALCOLO FINALE ANALITICO ---
     dx_m = x_g_vec[1] - x_g_vec[0]
     dy_m = y_g_vec[1] - y_g_vec[0]
     Tan = calcola_soluzione_analitica_globale(xg, yg, Sole, cellex, celley, xm, ym, p['n_f'], p['m_f'], Uk, Ut, p['h'], Ta, kT, qohm, dx_m, dy_m)
-    
     Tmaxan = np.max(Tan)
     
     return xg, yg, Tan, Tmaxan, eta, Impr, iii, kT
 
 # =========================================================================
-# 2. SIDEBAR DI CONFIGURAZIONE COMPLETA (DATI_N)
+# 2. SIDEBAR DI CONFIGURAZIONE (CON MENU A TENDINA)
 # =========================================================================
-with st.sidebar.expander("📐 Geometria Modulo", expanded=True):
+
+with st.sidebar.expander("📐 Geometria Modulo", expanded=False):
     x_m = st.number_input("xm: Larghezza modulo [m]", value=0.991)
     y_m = st.number_input("ym: Altezza modulo [m]", value=1.65)
     sb_b = st.number_input("s_bord_b: Spazio bordo inferiore [m]", value=0.04, format="%.4f")
@@ -249,7 +259,6 @@ with st.sidebar.expander("📐 Geometria Modulo", expanded=True):
     ncx = st.number_input("ncx: Celle su X", value=6, step=1)
     ncy = st.number_input("ncy: Celle su Y", value=10, step=1)
 
-# Le altre sezioni sono chiuse all'avvio (expanded=False)
 with st.sidebar.expander("🧱 Layer Stratigrafia", expanded=False):
     kglass = st.number_input("kglass: Conducibilità Vetro [W/mK]", value=1.8)
     sglass = st.number_input("sglass: Spessore Vetro [mm]", value=3.2)
@@ -276,14 +285,37 @@ with st.sidebar.expander("🌍 Condizioni Operative", expanded=False):
     U0 = st.number_input("U0", value=33.0)
     U1 = st.number_input("U1", value=7.0)
 
-with st.sidebar.expander("🌫️ Ombreggiamento", expanded=False):
+with st.sidebar.expander("🌫️ Ombreggiamento MULTIPLO", expanded=False):
     ombra_attiva = st.checkbox("Attiva Ombra", value=True)
+    celle_oscurate = []
+    
     if ombra_attiva:
-        riga_ombra = st.number_input(f"Riga (1-{ncy})", 1, ncy, 1)
-        col_ombra = st.number_input(f"Colonna (1-{ncx})", 1, ncx, 2)
-        fattore_sole = st.slider("Trasmissione", 0.0, 1.0, 0.05)
+        # 1. Generiamo dinamicamente le opzioni basandoci sui parametri ncx e ncy attuali!
+        opzioni_celle = [f"R{r}-C{c}" for r in range(1, int(ncy) + 1) for c in range(1, int(ncx) + 1)]
+        
+        # 2. Impostiamo un default "sicuro" per evitare crash se si riduce drasticamente il pannello
+        if "R1-C2" in opzioni_celle:
+            default_cella = ["R1-C2"]
+        elif opzioni_celle:
+            default_cella = [opzioni_celle[0]] # Prende la prima disponibile se R1-C2 non esiste
+        else:
+            default_cella = []
+            
+        # 3. La tendina ora mostra anche il totale dinamico delle celle
+        celle_selezionate = st.multiselect(
+            f"Seleziona le celle da oscurare (Totale pannello: {int(ncx*ncy)}):", 
+            opzioni_celle, 
+            default=default_cella
+        )
+        fattore_sole = st.slider("Trasmissione (0.0 = buio, 1.0 = luce totale)", 0.0, 1.0, 0.05)
+        
+        # Convertiamo i testi selezionati in coordinate numeriche tuple (riga, colonna)
+        for cella in celle_selezionate:
+            parti = cella.replace("R","").split("-C")
+            celle_oscurate.append((int(parti[0]), int(parti[1])))
     else:
-        riga_ombra, col_ombra, fattore_sole = 1, 1, 1.0
+        celle_selezionate = []
+        fattore_sole = 1.0
 
 with st.sidebar.expander("🔄 Risoluzione", expanded=False):
     n_fourier = st.number_input("n_fourier", value=100)
@@ -296,80 +328,155 @@ with st.sidebar.expander("🔄 Risoluzione", expanded=False):
 # =========================================================================
 # 3. INTERFACCIA DI CALCOLO E PLOT
 # =========================================================================
-if st.button("🚀 Esegui Modello Termo-Elettrico", type="primary"):
+
+# 1. NOME SIMULAZIONE E PULSANTE DI AVVIO
+st.markdown("---")
+col_input, col_btn = st.columns([2, 1])
+with col_input:
+    nome_simulazione = st.text_input("📝 Assegna un nome a questa simulazione (Opzionale):", placeholder="Es. Test Ombra 50% - Vento 10 m/s")
+with col_btn:
+    st.write("") # Spaziatura per allineare il bottone alla barra di testo
+    esegui = st.button("🚀 Esegui Modello Termo-Elettrico", type="primary", use_container_width=True)
+
+if esegui:
     with st.spinner("Calcolo integrale Analitico su tutto il pannello in corso..."):
-        p = {'xm':x_m,'ym':y_m,'s_bord_b':sb_b,'s_bord_t':sb_t,'s_bord_lr':sb_lr,'s_cell_y':sc_y,'s_cell_x':sc_x,'ncx':ncx,'ncy':ncy,'kglass':kglass,'sglass':sglass,'keva':keva,'seva':seva,'kpv':kpv,'spv':spv,'kted':kted,'sted':sted,'Isc':Isc,'Rs':Rs,'eta_STC':eta_STC,'Imp':Imp,'alfaimp':alfaimp,'gamma':gamma,'vento':vento,'Ta_C':Ta_C,'GSTC':GSTC,'mod_thick':mod_thick,'U0':U0,'U1':U1,'ombra_attiva':ombra_attiva,'riga_ombra':riga_ombra,'col_ombra':col_ombra,'fattore_sole':fattore_sole,'n_f':n_fourier,'m_f':m_fourier,'itmax':itmax,'toll':toll,'Nx_cella':20,'Ny_cella':20,'nx_res':nx_res,'ny_res':ny_res}
+        p = {'xm':x_m,'ym':y_m,'s_bord_b':sb_b,'s_bord_t':sb_t,'s_bord_lr':sb_lr,'s_cell_y':sc_y,'s_cell_x':sc_x,'ncx':ncx,'ncy':ncy,'kglass':kglass,'sglass':sglass,'keva':keva,'seva':seva,'kpv':kpv,'spv':spv,'kted':kted,'sted':sted,'Isc':Isc,'Rs':Rs,'eta_STC':eta_STC,'Imp':Imp,'alfaimp':alfaimp,'gamma':gamma,'vento':vento,'Ta_C':Ta_C,'GSTC':GSTC,'mod_thick':mod_thick,'U0':U0,'U1':U1,'ombra_attiva':ombra_attiva,'celle_oscurate':celle_oscurate,'fattore_sole':fattore_sole,'n_f':n_fourier,'m_f':m_fourier,'itmax':itmax,'toll':toll,'Nx_cella':20,'Ny_cella':20,'nx_res':nx_res,'ny_res':ny_res}
         p['h'] = 2.8 + 3 * vento
         
+        # Lancio solutore
         xg, yg, Tan, Tmaxan, eta, Impr, iterazioni, kT_calc = esegui_simulazione_completa(p)
         
-        st.success(f"Convergenza in {iterazioni} iterazioni. kT calcolato = {kT_calc:.4f}")
+        # Creiamo un dizionario con la geometria per ridisegnare la griglia nera sui grafici storici
+        geo_plot = {'x_m': x_m, 'y_m': y_m, 'sb_lr': sb_lr, 'sc_x': sc_x, 'ncx': ncx, 'sb_t': sb_t, 'sb_b': sb_b, 'sc_y': sc_y, 'ncy': ncy}
         
-        col1, col2 = st.columns(2)
-        with col1:
-            st.subheader("Mappa Analitica (pcolor)")
-            fig1, ax1 = plt.subplots(figsize=(6, 7))
-            c = ax1.pcolormesh(xg, yg, Tan, shading='gouraud', cmap='turbo')
-            fig1.colorbar(c, ax=ax1, label="Temperatura [°C]")
-            
-            xc_f = (x_m - 2*sb_lr - (ncx-1)*sc_x) / ncx
-            yc_f = (y_m - sb_t - sb_b - (ncy-1)*sc_y) / ncy
-            iniziocx_f = np.arange(sb_lr, x_m - xc_f + 1e-5, xc_f + sc_x)
-            finecx_f = iniziocx_f + xc_f
-            iniziocy_f = np.arange(sb_b, y_m - yc_f + 1e-5, yc_f + sc_y)
-            finecy_f = iniziocy_f + yc_f
-            cellex_f = np.sort(np.concatenate((iniziocx_f, finecx_f)))
-            celley_f = np.sort(np.concatenate((iniziocy_f, finecy_f)))
-            
-            ax1.hlines(celley_f, 0, x_m, colors='k', linewidth=1.5)
-            ax1.vlines(cellex_f, 0, y_m, colors='k', linewidth=1.5)
-            ax1.set_xlabel('$x_c$')
-            ax1.set_ylabel('$y_c$')
-            ax1.set_xlim([0, x_m])
-            ax1.set_ylim([0, y_m])
-            st.pyplot(fig1)
-            
-        with col2:
-            st.subheader("Superficie Analitica (surf)")
-            fig2 = plt.figure(figsize=(7, 7))
-            ax2 = fig2.add_subplot(111, projection='3d')
-            surf = ax2.plot_surface(xg, yg, Tan, cmap='turbo', edgecolor='none', antialiased=True)
-            ax2.set_xlabel('x [m]')
-            ax2.set_ylabel('y [m]')
-            ax2.set_zlabel('Temperatura [°C]')
-            fig2.colorbar(surf, ax=ax2, shrink=0.5, aspect=10)
-            st.pyplot(fig2)
-            
-        st.subheader("Impatto Elettrico")
-        col_b1, col_b2 = st.columns(2)
-        with col_b1:
-            fig3, ax3 = plt.subplots(figsize=(6, 4))
-            ax3.bar(['Ideale', 'Reale'], [eta_STC * 100, eta * 100], color=['#0072BD', '#D95319'])
-            ax3.set_ylabel("Efficienza [%]")
-            st.pyplot(fig3)
-        with col_b2:
-            fig4, ax4 = plt.subplots(figsize=(6, 4))
-            ax4.bar(['Ideale', 'Reale'], [Imp, Impr], color=['#0072BD', '#EDB120'])
-            ax4.set_ylabel("Corrente [A]")
-            st.pyplot(fig4)
-            
-        st.markdown("---")
-        st.subheader("📊 Analisi Effetto Convettivo di Bordo (Robin)")
+        # Salviamo la stringa delle celle selezionate
+        str_celle_ombra = ", ".join(celle_selezionate) if ombra_attiva and celle_selezionate else "Nessuna"
         
-        # Le temperature dei bordi vengono calcolate direttamente da Tan, esattamente come su MATLAB
-        T_bordo_inf = np.mean(Tan[0, :])
-        T_bordo_sup = np.mean(Tan[-1, :])
-        T_bordo_sx  = np.mean(Tan[:, 0])
-        T_bordo_dx  = np.mean(Tan[:, -1])
-        T_media_perimetro = np.mean([T_bordo_inf, T_bordo_sup, T_bordo_sx, T_bordo_dx])
-        delta_centro_bordi = Tmaxan - T_media_perimetro
+        # Gestione del nome personalizzato (se vuoto, usa Run #X)
+        run_id = nome_simulazione.strip() if nome_simulazione.strip() else f"Run #{len(st.session_state['history']) + 1}"
         
-        c_disp1, c_disp2 = st.columns(2)
-        with c_disp1:
-            st.info(f"**Temperatura Massima Analitica:** {Tmaxan:.2f} °C")
-            st.metric("Temperatura Media Bordo Inferiore", f"{T_bordo_inf:.2f} °C")
-            st.metric("Temperatura Media Bordo Superiore", f"{T_bordo_sup:.2f} °C")
-        with c_disp2:
-            st.warning(f"**Delta Termico (Tmax - Tperimetro):** {delta_centro_bordi:.2f} °C")
-            st.metric("Temperatura Media Bordo Sinistro", f"{T_bordo_sx:.2f} °C")
-            st.metric("Temperatura Media Bordo Destro", f"{T_bordo_dx:.2f} °C")
+        # Creiamo l'oggetto da mettere in memoria (contiene dati da tabella + matrici nascoste)
+        risultato_corrente = {
+            "ID": run_id,
+            "Tmax [°C]": round(Tmaxan, 2),
+            "Efficienza [%]": round(eta * 100, 2),
+            "Corrente [A]": round(Impr, 2),
+            "Vento [m/s]": vento,
+            "Celle d'Ombra": str_celle_ombra,
+            
+            # --- Dati nascosti per i grafici ---
+            "xg": xg, "yg": yg, "Tan": Tan, "Tmaxan_full": Tmaxan,
+            "eta": eta, "Impr": Impr, "eta_STC": eta_STC, "Imp": Imp,
+            "geo": geo_plot, "kT_calc": kT_calc, "iter": iterazioni
+        }
+        
+        st.session_state['history'].append(risultato_corrente)
+        
+        # Manteniamo solo le ultime 3 in memoria per non appesantire il server
+        if len(st.session_state['history']) > 3:
+            st.session_state['history'].pop(0)
+            
+        # Ricarichiamo la pagina per mostrare i nuovi grafici
+        st.rerun()
+
+# 2. SE C'È STORICO, MOSTRA LA TABELLA E I GRAFICI (Indipendente dal pulsante)
+if st.session_state['history']:
+    st.markdown("---")
+    st.markdown("### 📋 Confronto Storico Simulazioni (Ultime 3 Esecuzioni)")
+    
+    # Rimuoviamo temporaneamente le matrici enormi per mostrare una tabella pulita
+    tabella_visiva = [{k: v for k, v in run.items() if k not in ['xg', 'yg', 'Tan', 'Tmaxan_full', 'eta', 'Impr', 'eta_STC', 'Imp', 'geo', 'kT_calc', 'iter']} for run in st.session_state['history']]
+    st.dataframe(tabella_visiva, use_container_width=True)
+    
+    # Selettore per decidere di quale esecuzione mostrare i grafici
+    colA, colB = st.columns([3, 1])
+    with colA:
+        nomi_run = [run["ID"] for run in st.session_state['history']]
+        # Di default è sempre selezionata l'ultima run fatta
+        run_selezionata = st.selectbox("🔍 Seleziona la simulazione per visualizzarne i grafici in dettaglio:", nomi_run, index=len(nomi_run)-1)
+    with colB:
+        st.write("")
+        st.write("")
+        if st.button("🗑️ Cancella Cronologia"):
+            st.session_state['history'] = []
+            st.rerun()
+
+    # Estraiamo le matrici salvate corrispondenti alla Run selezionata
+    dati_plot = next(run for run in st.session_state['history'] if run["ID"] == run_selezionata)
+    
+    st.success(f"Visualizzazione Dettagli: **{dati_plot['ID']}** | Convergenza: {dati_plot['iter']} iterazioni | kT = {dati_plot['kT_calc']:.4f}")
+    
+    # Rinominazione rapida variabili per leggibilità del plot
+    xg_p, yg_p, Tan_p = dati_plot['xg'], dati_plot['yg'], dati_plot['Tan']
+    gp = dati_plot['geo'] # Parametri geometrici di questa specifica run
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("Mappa Analitica (pcolor)")
+        fig1, ax1 = plt.subplots(figsize=(6, 7))
+        c = ax1.pcolormesh(xg_p, yg_p, Tan_p, shading='gouraud', cmap='viridis')
+        fig1.colorbar(c, ax=ax1, label="Temperatura [°C]")
+        
+        # Ricalcolo griglia nera basata sulla geometria storica di quella run
+        xc_f = (gp['x_m'] - 2*gp['sb_lr'] - (gp['ncx']-1)*gp['sc_x']) / gp['ncx']
+        yc_f = (gp['y_m'] - gp['sb_t'] - gp['sb_b'] - (gp['ncy']-1)*gp['sc_y']) / gp['ncy']
+        iniziocx_f = np.arange(gp['sb_lr'], gp['x_m'] - xc_f + 1e-5, xc_f + gp['sc_x'])
+        finecx_f = iniziocx_f + xc_f
+        iniziocy_f = np.arange(gp['sb_b'], gp['y_m'] - yc_f + 1e-5, yc_f + gp['sc_y'])
+        finecy_f = iniziocy_f + yc_f
+        cellex_f = np.sort(np.concatenate((iniziocx_f, finecx_f)))
+        celley_f = np.sort(np.concatenate((iniziocy_f, finecy_f)))
+        
+        ax1.hlines(celley_f, 0, gp['x_m'], colors='k', linewidth=1.5)
+        ax1.vlines(cellex_f, 0, gp['y_m'], colors='k', linewidth=1.5)
+        
+        ax1.set_xlabel('$x_c$')
+        ax1.set_ylabel('$y_c$')
+        ax1.set_xlim([0, gp['x_m']])
+        ax1.set_ylim([0, gp['y_m']])
+        st.pyplot(fig1)
+        
+    with col2:
+        st.subheader("Superficie Analitica (surf)")
+        fig2 = plt.figure(figsize=(7, 7))
+        ax2 = fig2.add_subplot(111, projection='3d')
+        surf = ax2.plot_surface(xg_p, yg_p, Tan_p, cmap='viridis', edgecolor='none', antialiased=True)
+        
+        ax2.set_xlabel('x [m]')
+        ax2.set_ylabel('y [m]')
+        ax2.set_zlabel('Temperatura [°C]')
+        fig2.colorbar(surf, ax=ax2, shrink=0.5, aspect=10)
+        st.pyplot(fig2)
+        
+    st.subheader("Impatto Elettrico")
+    col_b1, col_b2 = st.columns(2)
+    with col_b1:
+        fig3, ax3 = plt.subplots(figsize=(6, 4))
+        ax3.bar(['Ideale', 'Reale'], [dati_plot['eta_STC'] * 100, dati_plot['eta'] * 100], color=['#0072BD', '#D95319'])
+        ax3.set_ylabel("Efficienza [%]")
+        st.pyplot(fig3)
+    with col_b2:
+        fig4, ax4 = plt.subplots(figsize=(6, 4))
+        ax4.bar(['Ideale', 'Reale'], [dati_plot['Imp'], dati_plot['Impr']], color=['#0072BD', '#EDB120'])
+        ax4.set_ylabel("Corrente [A]")
+        st.pyplot(fig4)
+        
+    st.markdown("---")
+    st.subheader("📊 Analisi Effetto Convettivo di Bordo (Robin)")
+    
+    T_bordo_inf = np.mean(Tan_p[0, :])
+    T_bordo_sup = np.mean(Tan_p[-1, :])
+    T_bordo_sx  = np.mean(Tan_p[:, 0])
+    T_bordo_dx  = np.mean(Tan_p[:, -1])
+    T_media_perimetro = np.mean([T_bordo_inf, T_bordo_sup, T_bordo_sx, T_bordo_dx])
+    delta_centro_bordi = dati_plot['Tmaxan_full'] - T_media_perimetro
+    
+    c_disp1, c_disp2 = st.columns(2)
+    with c_disp1:
+        st.info(f"**Temperatura Massima Analitica:** {dati_plot['Tmaxan_full']:.2f} °C")
+        st.metric("Temperatura Media Bordo Inferiore", f"{T_bordo_inf:.2f} °C")
+        st.metric("Temperatura Media Bordo Superiore", f"{T_bordo_sup:.2f} °C")
+    with c_disp2:
+        st.warning(f"**Delta Termico (Tmax - Tperimetro):** {delta_centro_bordi:.2f} °C")
+        st.metric("Temperatura Media Bordo Sinistro", f"{T_bordo_sx:.2f} °C")
+        st.metric("Temperatura Media Bordo Destro", f"{T_bordo_dx:.2f} °C")
