@@ -166,9 +166,7 @@ def esegui_simulazione_completa(p):
     Ta = p['Ta_C'] + 273.15
     Ut = (p['U0'] + p['vento'] * p['U1']) / mod_thick
     
-    # --- MODIFICA UK ---
-    # Uk calcolato con il parametro kTT inserito
-    Uk = Ut / p['kTT']
+    Uk = Ut / p['kT']
     
     Rv = p['Rs'] * ncy * ncx
     QSOL = p['GSTC'] / mod_thick
