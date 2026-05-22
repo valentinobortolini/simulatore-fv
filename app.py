@@ -168,7 +168,8 @@ def esegui_simulazione_completa(p):
     
     Uk = Ut / kT
     
-    Rv = p['Rs'] * ncy * ncx
+    # Rv = p['Rs'] * ncy * ncx
+    Rv = p['Rs']
     QSOL = p['GSTC'] / mod_thick
     
     iniziocx = np.arange(p['s_bord_lr'], xm - xc + 1e-5, xc + p['s_cell_x'])
@@ -195,7 +196,8 @@ def esegui_simulazione_completa(p):
     
     eta = p['eta_STC']
     err, iii = 1, 0
-    qohm = 0
+    I = 0
+    qohm = Rv * I**2 / (Ac * mod_thick)
     
     while err > p['toll'] and iii < p['itmax']:
         Sole = QSOL * np.ones_like(xg) * (1 - eta)
@@ -356,7 +358,7 @@ with col_btn:
 
 if esegui:
     with st.spinner("Calcolo integrale Analitico su tutto il pannello in corso..."):
-        # AGGIUNTO kTT NEL DIZIONARIO PARAMETRI
+        
         p = {'xm':x_m,'ym':y_m,'s_bord_b':sb_b,'s_bord_t':sb_t,'s_bord_lr':sb_lr,'s_cell_y':sc_y,'s_cell_x':sc_x,'ncx':ncx,'ncy':ncy,'kglass':kglass,'sglass':sglass,'keva':keva,'seva':seva,'kpv':kpv,'spv':spv,'kted':kted,'sted':sted,'kTT':kTT,'Isc':Isc,'Rs':Rs,'eta_STC':eta_STC,'Imp':Imp,'alfaimp':alfaimp,'gamma':gamma,'vento':vento,'Ta_C':Ta_C,'GSTC':GSTC,'mod_thick':mod_thick,'U0':U0,'U1':U1,'ombra_attiva':ombra_attiva,'celle_oscurate':celle_oscurate,'fattore_sole':fattore_sole,'n_f':n_fourier,'m_f':m_fourier,'itmax':itmax,'toll':toll,'Nx_cella':20,'Ny_cella':20,'nx_res':nx_res,'ny_res':ny_res}
         p['h'] = 2.8 + 3 * vento
         
