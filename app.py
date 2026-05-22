@@ -16,8 +16,8 @@ st.set_page_config(page_title="Simulatore FV Completo", layout="wide")
 if 'history' not in st.session_state:
     st.session_state['history'] = []
 
-st.title("☀️ Modello Termo-Elettrico Modulo Fotovoltaico (Multi-Ombra & History)")
-st.markdown("Simulatore avanzato fedele al modello MATLAB originale con supporto per l'oscuramento multiplo e confronto storico dei risultati.")
+st.title("☀️ Modello Termo-Elettrico Modulo Fotovoltaico")
+st.markdown("Modello Termo-Elettrico per il calcolo della distribuzione di temperatura in un modulo fotovoltaico, con possibilità di simulare ombreggiamenti multipli e confrontare più esecuzioni.")
 
 # =========================================================================
 # 1. FUNZIONI MATEMATICHE DI BACKGROUND
