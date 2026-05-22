@@ -470,4 +470,14 @@ if st.session_state['history']:
         
         st.info(f"**Temperatura Massima:** {dati_plot['Tmaxan_full']:.2f} °C")
         st.warning(f"**Delta Termico (Centro - Bordi):** {delta_centro_bordi:.2f} °C")
-        st.write
+        st.write(f"**T. Bordo Sup:** {T_bordo_sup:.2f} °C | **T. Bordo Inf:** {T_bordo_inf:.2f} °C")
+        st.write(f"**T. Bordo Sx:** {T_bordo_sx:.2f} °C | **T. Bordo Dx:** {T_bordo_dx:.2f} °C")
+
+    # --- CREAZIONE DELLO SPLIT SCREEN ---
+    col_vis_sx, col_vis_dx = st.columns(2)
+    
+    with col_vis_sx:
+        disegna_colonna_grafici(run_sx_dati)
+        
+    with col_vis_dx:
+        disegna_colonna_grafici(run_dx_dati)
