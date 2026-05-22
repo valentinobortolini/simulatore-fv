@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
 # Forza l'estetica scura per i grafici
-plt.style.use('dark_background')
+# plt.style.use('dark_background')
 st.set_page_config(page_title="Simulatore FV Completo", layout="wide")
 
 # =========================================================================
@@ -325,9 +325,17 @@ with st.sidebar.expander("🔄 Risoluzione", expanded=False):
     nx_res = st.number_input("Mesh X", value=80)
     ny_res = st.number_input("Mesh Y", value=70)
 
+with st.sidebar.expander("🎨 Aspetto Grafici", expanded=False):
+    tema_scuro = st.checkbox("Usa sfondo scuro per i grafici", value=False)
+
 # =========================================================================
 # 3. INTERFACCIA DI CALCOLO E PLOT
 # =========================================================================
+
+if tema_scuro:
+    plt.style.use('dark_background')
+else:
+    plt.style.use('default')
 
 st.markdown("---")
 col_input, col_btn = st.columns([2, 1])
