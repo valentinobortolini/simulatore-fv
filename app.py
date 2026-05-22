@@ -238,7 +238,7 @@ def esegui_simulazione_completa(p):
 # =========================================================================
 # 2. SIDEBAR DI CONFIGURAZIONE COMPLETA (DATI_N)
 # =========================================================================
-with st.sidebar.expander("📐 Geometria Modulo", expanded=True):
+with st.sidebar.expander("📐 Geometria Modulo", expanded=False):
     x_m = st.number_input("xm: Larghezza modulo [m]", value=0.991)
     y_m = st.number_input("ym: Altezza modulo [m]", value=1.65)
     sb_b = st.number_input("s_bord_b: Spazio bordo inferiore [m]", value=0.04, format="%.4f")
