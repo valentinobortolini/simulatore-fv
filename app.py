@@ -365,8 +365,8 @@ if esegui:
         
         st.session_state['history'].append(risultato_corrente)
         
-        # Manteniamo fino a 4 simulazioni per permettere più confronti
-        if len(st.session_state['history']) > 4:
+        # Manteniamo fino a 5 simulazioni per permettere più confronti
+        if len(st.session_state['history']) > 5:
             st.session_state['history'].pop(0)
             
         st.rerun()
