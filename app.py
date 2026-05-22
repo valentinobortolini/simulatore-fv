@@ -6,8 +6,6 @@ from scipy.interpolate import RegularGridInterpolator
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
-# Forza l'estetica scura per i grafici
-# plt.style.use('dark_background')
 st.set_page_config(page_title="Simulatore FV Completo", layout="wide")
 
 # =========================================================================
@@ -24,7 +22,7 @@ st.markdown("Modello Termo-Elettrico per il calcolo della distribuzione di tempe
 # =========================================================================
 
 @st.cache_data
-def calcola_somme_fourier(x_g_vec, y_g_vec, cellex, celley, xm, ym, n, m, Uk, Ut, h, Ta, kT, qohm):
+def calcola_somme_fourier(x_g_vec, y_g_vec, cellex, celley, xm, ym, n, m, Uk, Ut, h, Ta, kT, qohm, kTT):
     Tansup = np.zeros_like(x_g_vec)
     Taninf = np.zeros_like(x_g_vec)
     Tansx = np.zeros_like(y_g_vec)
@@ -40,8 +38,11 @@ def calcola_somme_fourier(x_g_vec, y_g_vec, cellex, celley, xm, ym, n, m, Uk, Ut
             lam_n = i * np.pi / ym
             mu_n = np.sqrt(lam_n**2 + Uk)
             num_n = (2 / (i * np.pi)) * (1 - (-1)**i) * h * Ta
-            C1n = num_n / (kT * mu_n * np.cosh(mu_n * xm) + h * np.sinh(mu_n * xm))
-            C2n = num_n / (-kT * mu_n * np.cosh(-mu_n * xm) + h * np.sinh(-mu_n * xm))
+            
+            # Sostituito kT con kTT nei coefficienti
+            C1n = num_n / (kTT * mu_n * np.cosh(mu_n * xm) + h * np.sinh(mu_n * xm))
+            C2n = num_n / (-kTT * mu_n * np.cosh(-mu_n * xm) + h * np.sinh(-mu_n * xm))
+            
             fun_x = lambda x_val: C1n * np.sinh(mu_n * x_val) + C2n * np.sinh(mu_n * (x_val - xm))
             Tansx += fun_x(0) * np.sin(lam_n * y_g_vec)
             Tandx += fun_x(xm) * np.sin(lam_n * y_g_vec)
@@ -54,8 +55,11 @@ def calcola_somme_fourier(x_g_vec, y_g_vec, cellex, celley, xm, ym, n, m, Uk, Ut
             lam_m = j * np.pi / xm
             gam_m = np.sqrt(lam_m**2 + Uk)
             num_m = (2 / (j * np.pi)) * (1 - (-1)**j) * h * Ta
-            C3m = num_m / (kT * gam_m * np.cosh(gam_m * ym) + h * np.sinh(gam_m * ym))
-            C4m = num_m / (-kT * gam_m * np.cosh(-gam_m * ym) + h * np.sinh(-gam_m * ym))
+            
+            # Sostituito kT con kTT nei coefficienti
+            C3m = num_m / (kTT * gam_m * np.cosh(gam_m * ym) + h * np.sinh(gam_m * ym))
+            C4m = num_m / (-kTT * gam_m * np.cosh(-gam_m * ym) + h * np.sinh(-gam_m * ym))
+            
             fun_y = lambda y_val: C3m * np.sinh(gam_m * y_val) + C4m * np.sinh(gam_m * (y_val - ym))
             Tansup += fun_y(ym) * np.sin(lam_m * x_g_vec)
             Taninf += fun_y(0) * np.sin(lam_m * x_g_vec)
@@ -81,7 +85,7 @@ def calcola_somme_fourier(x_g_vec, y_g_vec, cellex, celley, xm, ym, n, m, Uk, Ut
     return Tansup, Taninf, Tansx, Tandx
 
 @st.cache_data
-def calcola_soluzione_analitica_globale(xg, yg, Sole, cellex, celley, xm, ym, n, m, Uk, Ut, h, Ta, kT, qohm, dx_m, dy_m):
+def calcola_soluzione_analitica_globale(xg, yg, Sole, cellex, celley, xm, ym, n, m, Uk, Ut, h, Ta, kT, qohm, dx_m, dy_m, kTT):
     Tsol = np.zeros_like(xg)
     Tohm = np.zeros_like(xg)
     Trobin = np.zeros_like(xg)
@@ -114,8 +118,11 @@ def calcola_soluzione_analitica_globale(xg, yg, Sole, cellex, celley, xm, ym, n,
             lam_n = i * np.pi / ym
             mu_n = np.sqrt(lam_n**2 + Uk)
             num_n = (2 / (i * np.pi)) * (1 - (-1)**i) * h * Ta
-            C1n = num_n / (kT * mu_n * np.cosh(mu_n * xm) + h * np.sinh(mu_n * xm))
-            C2n = num_n / (-kT * mu_n * np.cosh(-mu_n * xm) + h * np.sinh(-mu_n * xm))
+            
+            # Sostituito kT con kTT nei coefficienti
+            C1n = num_n / (kTT * mu_n * np.cosh(mu_n * xm) + h * np.sinh(mu_n * xm))
+            C2n = num_n / (-kTT * mu_n * np.cosh(-mu_n * xm) + h * np.sinh(-mu_n * xm))
+            
             Trobin += (C1n * np.sinh(mu_n * xg) + C2n * np.sinh(mu_n * (xg - xm))) * np.sin(lam_n * yg)
             
     for j in range(1, m + 1):
@@ -123,8 +130,11 @@ def calcola_soluzione_analitica_globale(xg, yg, Sole, cellex, celley, xm, ym, n,
             lam_m = j * np.pi / xm
             gam_m = np.sqrt(lam_m**2 + Uk)
             num_m = (2 / (j * np.pi)) * (1 - (-1)**j) * h * Ta
-            C3m = num_m / (kT * gam_m * np.cosh(gam_m * ym) + h * np.sinh(gam_m * ym))
-            C4m = num_m / (-kT * gam_m * np.cosh(-gam_m * ym) + h * np.sinh(-gam_m * ym))
+            
+            # Sostituito kT con kTT nei coefficienti
+            C3m = num_m / (kTT * gam_m * np.cosh(gam_m * ym) + h * np.sinh(gam_m * ym))
+            C4m = num_m / (-kTT * gam_m * np.cosh(-gam_m * ym) + h * np.sinh(-gam_m * ym))
+            
             Trobin += (C3m * np.sinh(gam_m * yg) + C4m * np.sinh(gam_m * (yg - ym))) * np.sin(lam_m * xg)
             
     Tan = Tsol + Tohm + Trobin + Ta - 273.15
@@ -155,7 +165,10 @@ def esegui_simulazione_completa(p):
     mod_thick = p['mod_thick']
     Ta = p['Ta_C'] + 273.15
     Ut = (p['U0'] + p['vento'] * p['U1']) / mod_thick
-    Uk = Ut / 200.0
+    
+    # --- MODIFICA UK ---
+    # Uk calcolato con il parametro kTT inserito
+    Uk = Ut / p['kTT']
     
     Rv = p['Rs'] * ncy * ncx
     QSOL = p['GSTC'] / mod_thick
@@ -189,7 +202,6 @@ def esegui_simulazione_completa(p):
     while err > p['toll'] and iii < p['itmax']:
         Sole = QSOL * np.ones_like(xg) * (1 - eta)
         
-        # LOGICA OMBREGGIAMENTO MULTIPLO (Ciclo su tutte le coordinate scelte)
         if p['ombra_attiva'] and p['celle_oscurate']:
             for (r_o, c_o) in p['celle_oscurate']:
                 ixi = np.searchsorted(x_g_vec, iniziocx[c_o-1])
@@ -200,8 +212,9 @@ def esegui_simulazione_completa(p):
             
         interpolator_sole = RegularGridInterpolator((y_g_vec, x_g_vec), Sole, bounds_error=False, fill_value=None)
         
+        # Passaggio di kTT alla funzione
         Tansup_g, Taninf_g, Tansx_g, Tandx_g = calcola_somme_fourier(
-            x_g_vec, y_g_vec, cellex, celley, xm, ym, p['n_f'], p['m_f'], Uk, Ut, p['h'], Ta, kT, qohm)
+            x_g_vec, y_g_vec, cellex, celley, xm, ym, p['n_f'], p['m_f'], Uk, Ut, p['h'], Ta, kT, qohm, p['kTT'])
         
         Tm_max_iter = 0
         for i_cell in range(ncx * ncy):
@@ -236,10 +249,11 @@ def esegui_simulazione_completa(p):
         eta = eta_new
         iii += 1
         
-    # --- CALCOLO FINALE ANALITICO ---
     dx_m = x_g_vec[1] - x_g_vec[0]
     dy_m = y_g_vec[1] - y_g_vec[0]
-    Tan = calcola_soluzione_analitica_globale(xg, yg, Sole, cellex, celley, xm, ym, p['n_f'], p['m_f'], Uk, Ut, p['h'], Ta, kT, qohm, dx_m, dy_m)
+    
+    # Passaggio di kTT alla funzione
+    Tan = calcola_soluzione_analitica_globale(xg, yg, Sole, cellex, celley, xm, ym, p['n_f'], p['m_f'], Uk, Ut, p['h'], Ta, kT, qohm, dx_m, dy_m, p['kTT'])
     Tmaxan = np.max(Tan)
     
     return xg, yg, Tan, Tmaxan, eta, Impr, iii, kT
@@ -268,6 +282,7 @@ with st.sidebar.expander("🧱 Layer Stratigrafia", expanded=False):
     spv = st.number_input("spv: Spessore Silicio PV [mm]", value=3.0)
     kted = st.number_input("kted: Conducibilità Tedlar [W/mK]", value=0.2)
     sted = st.number_input("sted: Spessore Tedlar [mm]", value=2.0)
+    kTT = st.number_input("kTT: Conducibilità Equivalente Bordi [W/mK]", value=200.0) # NUOVO PARAMETRO
 
 with st.sidebar.expander("🔌 Parametri Elettrici", expanded=False):
     Isc = st.number_input("Isc: Corrente cc [A]", value=11.05)
@@ -290,18 +305,15 @@ with st.sidebar.expander("🌫️ Ombreggiamento MULTIPLO", expanded=False):
     celle_oscurate = []
     
     if ombra_attiva:
-        # 1. Generiamo dinamicamente le opzioni basandoci sui parametri ncx e ncy attuali!
         opzioni_celle = [f"R{r}-C{c}" for r in range(1, int(ncy) + 1) for c in range(1, int(ncx) + 1)]
         
-        # 2. Impostiamo un default "sicuro" per evitare crash se si riduce drasticamente il pannello
         if "R1-C2" in opzioni_celle:
             default_cella = ["R1-C2"]
         elif opzioni_celle:
-            default_cella = [opzioni_celle[0]] # Prende la prima disponibile se R1-C2 non esiste
+            default_cella = [opzioni_celle[0]]
         else:
             default_cella = []
             
-        # 3. La tendina ora mostra anche il totale dinamico delle celle
         celle_selezionate = st.multiselect(
             f"Seleziona le celle da oscurare (Totale pannello: {int(ncx*ncy)}):", 
             opzioni_celle, 
@@ -309,7 +321,6 @@ with st.sidebar.expander("🌫️ Ombreggiamento MULTIPLO", expanded=False):
         )
         fattore_sole = st.slider("Trasmissione (0.0 = buio, 1.0 = luce totale)", 0.0, 1.0, 0.05)
         
-        # Convertiamo i testi selezionati in coordinate numeriche tuple (riga, colonna)
         for cella in celle_selezionate:
             parti = cella.replace("R","").split("-C")
             celle_oscurate.append((int(parti[0]), int(parti[1])))
@@ -345,10 +356,10 @@ with col_btn:
     st.write("")
     esegui = st.button("🚀 Esegui Modello Termo-Elettrico", type="primary", use_container_width=True)
 
-# 1. IL PULSANTE ESEGUE SOLO IL CALCOLO E SALVA I DATI IN MEMORIA
 if esegui:
     with st.spinner("Calcolo integrale Analitico su tutto il pannello in corso..."):
-        p = {'xm':x_m,'ym':y_m,'s_bord_b':sb_b,'s_bord_t':sb_t,'s_bord_lr':sb_lr,'s_cell_y':sc_y,'s_cell_x':sc_x,'ncx':ncx,'ncy':ncy,'kglass':kglass,'sglass':sglass,'keva':keva,'seva':seva,'kpv':kpv,'spv':spv,'kted':kted,'sted':sted,'Isc':Isc,'Rs':Rs,'eta_STC':eta_STC,'Imp':Imp,'alfaimp':alfaimp,'gamma':gamma,'vento':vento,'Ta_C':Ta_C,'GSTC':GSTC,'mod_thick':mod_thick,'U0':U0,'U1':U1,'ombra_attiva':ombra_attiva,'celle_oscurate':celle_oscurate,'fattore_sole':fattore_sole,'n_f':n_fourier,'m_f':m_fourier,'itmax':itmax,'toll':toll,'Nx_cella':20,'Ny_cella':20,'nx_res':nx_res,'ny_res':ny_res}
+        # AGGIUNTO kTT NEL DIZIONARIO PARAMETRI
+        p = {'xm':x_m,'ym':y_m,'s_bord_b':sb_b,'s_bord_t':sb_t,'s_bord_lr':sb_lr,'s_cell_y':sc_y,'s_cell_x':sc_x,'ncx':ncx,'ncy':ncy,'kglass':kglass,'sglass':sglass,'keva':keva,'seva':seva,'kpv':kpv,'spv':spv,'kted':kted,'sted':sted,'kTT':kTT,'Isc':Isc,'Rs':Rs,'eta_STC':eta_STC,'Imp':Imp,'alfaimp':alfaimp,'gamma':gamma,'vento':vento,'Ta_C':Ta_C,'GSTC':GSTC,'mod_thick':mod_thick,'U0':U0,'U1':U1,'ombra_attiva':ombra_attiva,'celle_oscurate':celle_oscurate,'fattore_sole':fattore_sole,'n_f':n_fourier,'m_f':m_fourier,'itmax':itmax,'toll':toll,'Nx_cella':20,'Ny_cella':20,'nx_res':nx_res,'ny_res':ny_res}
         p['h'] = 2.8 + 3 * vento
         
         xg, yg, Tan, Tmaxan, eta, Impr, iterazioni, kT_calc = esegui_simulazione_completa(p)
@@ -365,7 +376,6 @@ if esegui:
             "Vento [m/s]": vento,
             "Celle d'Ombra": str_celle_ombra,
             
-            # --- Dati nascosti per i grafici ---
             "xg": xg, "yg": yg, "Tan": Tan, "Tmaxan_full": Tmaxan,
             "eta": eta, "Impr": Impr, "eta_STC": eta_STC, "Imp": Imp,
             "geo": geo_plot, "kT_calc": kT_calc, "iter": iterazioni
@@ -373,18 +383,15 @@ if esegui:
         
         st.session_state['history'].append(risultato_corrente)
         
-        # Manteniamo fino a 5 simulazioni per permettere più confronti
         if len(st.session_state['history']) > 5:
             st.session_state['history'].pop(0)
             
         st.rerun()
 
-# 2. SE C'È STORICO, MOSTRA LA TABELLA E I GRAFICI SPLIT-SCREEN
 if st.session_state['history']:
     st.markdown("---")
     st.markdown("### 📋 Tabella Riassuntiva Simulazioni")
     
-    # Tabella pulita senza le matrici pesanti
     tabella_visiva = [{k: v for k, v in run.items() if k not in ['xg', 'yg', 'Tan', 'Tmaxan_full', 'eta', 'Impr', 'eta_STC', 'Imp', 'geo', 'kT_calc', 'iter']} for run in st.session_state['history']]
     st.dataframe(tabella_visiva, use_container_width=True)
     
@@ -398,28 +405,23 @@ if st.session_state['history']:
     
     nomi_run = [run["ID"] for run in st.session_state['history']]
     
-    # Selettori per lo split screen
     col_sel_sx, col_sel_dx = st.columns(2)
     with col_sel_sx:
-        # Default: penultima simulazione (se esiste) altrimenti la prima
         idx_sx = max(0, len(nomi_run) - 2)
         run_sx_nome = st.selectbox("⬅️ Simulazione SINISTRA:", nomi_run, index=idx_sx, key="sel_sx")
     with col_sel_dx:
-        # Default: ultimissima simulazione
         idx_dx = len(nomi_run) - 1
         run_dx_nome = st.selectbox("➡️ Simulazione DESTRA:", nomi_run, index=idx_dx, key="sel_dx")
 
     run_sx_dati = next(run for run in st.session_state['history'] if run["ID"] == run_sx_nome)
     run_dx_dati = next(run for run in st.session_state['history'] if run["ID"] == run_dx_nome)
 
-    # --- FUNZIONE INTERNA PER DISEGNARE LA COLONNA (Non devi copiare il codice due volte!) ---
     def disegna_colonna_grafici(dati_plot):
         st.success(f"Dettagli: **{dati_plot['ID']}** | {dati_plot['iter']} iterazioni | kT = {dati_plot['kT_calc']:.4f}")
         
         xg_p, yg_p, Tan_p = dati_plot['xg'], dati_plot['yg'], dati_plot['Tan']
         gp = dati_plot['geo']
         
-        # Mappa 2D
         st.markdown("#### Mappa Analitica (pcolor)")
         fig1, ax1 = plt.subplots(figsize=(5, 6))
         c = ax1.pcolormesh(xg_p, yg_p, Tan_p, shading='gouraud', cmap='viridis')
@@ -442,7 +444,6 @@ if st.session_state['history']:
         ax1.set_ylim([0, gp['y_m']])
         st.pyplot(fig1)
         
-        # Mappa 3D
         st.markdown("#### Superficie Analitica (surf)")
         fig2 = plt.figure(figsize=(6, 6))
         ax2 = fig2.add_subplot(111, projection='3d')
@@ -453,7 +454,6 @@ if st.session_state['history']:
         fig2.colorbar(surf, ax=ax2, shrink=0.5, aspect=10)
         st.pyplot(fig2)
         
-        # Grafici a Barre
         st.markdown("#### Impatto Elettrico")
         col_b1, col_b2 = st.columns(2)
         with col_b1:
@@ -467,7 +467,6 @@ if st.session_state['history']:
             ax4.set_ylabel("Corrente [A]")
             st.pyplot(fig4)
             
-        # Dati Testuali Robin
         st.markdown("#### 📊 Dati Convettivi (Robin)")
         T_bordo_inf = np.mean(Tan_p[0, :])
         T_bordo_sup = np.mean(Tan_p[-1, :])
@@ -481,7 +480,6 @@ if st.session_state['history']:
         st.write(f"**T. Bordo Sup:** {T_bordo_sup:.2f} °C | **T. Bordo Inf:** {T_bordo_inf:.2f} °C")
         st.write(f"**T. Bordo Sx:** {T_bordo_sx:.2f} °C | **T. Bordo Dx:** {T_bordo_dx:.2f} °C")
 
-    # --- CREAZIONE DELLO SPLIT SCREEN ---
     col_vis_sx, col_vis_dx = st.columns(2)
     
     with col_vis_sx:
