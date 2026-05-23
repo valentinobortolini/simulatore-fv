@@ -3,6 +3,7 @@ import numpy as np
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 from scipy.interpolate import RegularGridInterpolator
+from scipy.special import lambertw
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
@@ -21,68 +22,129 @@ st.markdown("Modello Termo-Elettrico per il calcolo della distribuzione di tempe
 # 1. FUNZIONI MATEMATICHE DI BACKGROUND
 # =========================================================================
 
-@st.cache_data
-def calcola_somme_fourier(x_g_vec, y_g_vec, cellex, celley, xm, ym, n, m, Uk, Ut, h, Ta, kT, qohm, kTT):
-    Tansup = np.zeros_like(x_g_vec)
-    Taninf = np.zeros_like(x_g_vec)
-    Tansx = np.zeros_like(y_g_vec)
-    Tandx = np.zeros_like(y_g_vec)
-    
+def prepara_termini_fourier(Sole, xg, yg, cellex, celley, xm, ym, n, m, Ut, kT, dx_m, dy_m):
+    alfa_vals = np.arange(1, n + 1) * np.pi / xm
+    beta_vals = np.arange(1, m + 1) * np.pi / ym
+    l_idx = np.arange(0, len(cellex) - 1, 2)
+    v_idx = np.arange(0, len(celley) - 1, 2)
+
+    somma_x = np.array([
+        np.sum(np.cos(alfa * cellex[l_idx + 1]) - np.cos(alfa * cellex[l_idx]))
+        for alfa in alfa_vals
+    ])
+    somma_y = np.array([
+        np.sum(np.cos(beta * celley[v_idx + 1]) - np.cos(beta * celley[v_idx]))
+        for beta in beta_vals
+    ])
+
+    den = np.zeros((n, m))
+    den2 = np.zeros((n, m))
+    fattore_sol = np.zeros((n, m))
+
+    for ii, alfa in enumerate(alfa_vals):
+        sin_alfa_xg = np.sin(alfa * xg)
+        for jj, beta in enumerate(beta_vals):
+            matrice_spaziale = sin_alfa_xg * np.sin(beta * yg)
+            den[ii, jj] = (Ut + kT * (alfa**2 + beta**2)) * alfa * beta
+            den2[ii, jj] = Ut + kT * (alfa**2 + beta**2)
+            fattore_sol[ii, jj] = dx_m * dy_m * np.sum(Sole * matrice_spaziale)
+
+    return {
+        "alfa": alfa_vals,
+        "beta": beta_vals,
+        "somma_x": somma_x,
+        "somma_y": somma_y,
+        "den": den,
+        "den2": den2,
+        "fattore_sol": fattore_sol,
+    }
+
+
+def calcola_bordi_cella_analitici(x_c, y_c, termini, xm, ym, Uk, h, Ta, qohm, kTT):
+    x1, x2 = x_c[0], x_c[-1]
+    y1, y2 = y_c[0], y_c[-1]
+
+    tansupsol = np.zeros_like(x_c)
+    taninfsol = np.zeros_like(x_c)
+    tansxsol = np.zeros_like(y_c)
+    tandxsol = np.zeros_like(y_c)
+
+    tansupohm = np.zeros_like(x_c)
+    taninfohm = np.zeros_like(x_c)
+    tansxohm = np.zeros_like(y_c)
+    tandxohm = np.zeros_like(y_c)
+
+    tansup_rob = np.zeros_like(x_c)
+    taninf_rob = np.zeros_like(x_c)
+    tansx_rob = np.zeros_like(y_c)
+    tandx_rob = np.zeros_like(y_c)
+
     costante_molt = 4 / (xm * ym)
-    l_idx = np.arange(0, len(cellex)-1, 2)
-    v_idx = np.arange(0, len(celley)-1, 2)
-    
-    # 1. Contributi Robin Y
-    for i in range(1, n + 1):
+    alfa_vals = termini["alfa"]
+    beta_vals = termini["beta"]
+
+    for ii, alfa in enumerate(alfa_vals):
+        sin_alfa_x = np.sin(alfa * x_c)
+        sin_alfa_x1 = np.sin(alfa * x1)
+        sin_alfa_x2 = np.sin(alfa * x2)
+
+        for jj, beta in enumerate(beta_vals):
+            sin_beta_y2 = np.sin(beta * y2)
+            sin_beta_y1 = np.sin(beta * y1)
+            sin_beta_y = np.sin(beta * y_c)
+
+            molt_sol = (costante_molt / termini["den2"][ii, jj]) * termini["fattore_sol"][ii, jj]
+            soluzioneintegrale = termini["somma_x"][ii] * termini["somma_y"][jj]
+            molt_ohm = (costante_molt / termini["den"][ii, jj]) * soluzioneintegrale * qohm
+
+            tansupsol += molt_sol * (sin_alfa_x * sin_beta_y2)
+            taninfsol += molt_sol * (sin_alfa_x * sin_beta_y1)
+            tansxsol += molt_sol * (sin_alfa_x1 * sin_beta_y)
+            tandxsol += molt_sol * (sin_alfa_x2 * sin_beta_y)
+
+            tansupohm += molt_ohm * (sin_alfa_x * sin_beta_y2)
+            taninfohm += molt_ohm * (sin_alfa_x * sin_beta_y1)
+            tansxohm += molt_ohm * (sin_alfa_x1 * sin_beta_y)
+            tandxohm += molt_ohm * (sin_alfa_x2 * sin_beta_y)
+
+    for i in range(1, len(alfa_vals) + 1):
         if i % 2 != 0:
             lam_n = i * np.pi / ym
             mu_n = np.sqrt(lam_n**2 + Uk)
             num_n = (2 / (i * np.pi)) * (1 - (-1)**i) * h * Ta
-            
-            # Sostituito kT con kTT nei coefficienti
+
             C1n = num_n / (kTT * mu_n * np.cosh(mu_n * xm) + h * np.sinh(mu_n * xm))
             C2n = num_n / (-kTT * mu_n * np.cosh(-mu_n * xm) + h * np.sinh(-mu_n * xm))
-            
-            fun_x = lambda x_val: C1n * np.sinh(mu_n * x_val) + C2n * np.sinh(mu_n * (x_val - xm))
-            Tansx += fun_x(0) * np.sin(lam_n * y_g_vec)
-            Tandx += fun_x(xm) * np.sin(lam_n * y_g_vec)
-            Tansup += fun_x(x_g_vec) * np.sin(lam_n * ym)
-            Taninf += fun_x(x_g_vec) * np.sin(lam_n * 0)
 
-    # 2. Contributi Robin X
-    for j in range(1, m + 1):
+            fun_x = lambda x_val: C1n * np.sinh(mu_n * x_val) + C2n * np.sinh(mu_n * (x_val - xm))
+
+            tansup_rob += fun_x(x_c) * np.sin(lam_n * y2)
+            taninf_rob += fun_x(x_c) * np.sin(lam_n * y1)
+            tansx_rob += fun_x(x1) * np.sin(lam_n * y_c)
+            tandx_rob += fun_x(x2) * np.sin(lam_n * y_c)
+
+    for j in range(1, len(beta_vals) + 1):
         if j % 2 != 0:
             lam_m = j * np.pi / xm
             gam_m = np.sqrt(lam_m**2 + Uk)
             num_m = (2 / (j * np.pi)) * (1 - (-1)**j) * h * Ta
-            
-            # Sostituito kT con kTT nei coefficienti
+
             C3m = num_m / (kTT * gam_m * np.cosh(gam_m * ym) + h * np.sinh(gam_m * ym))
             C4m = num_m / (-kTT * gam_m * np.cosh(-gam_m * ym) + h * np.sinh(-gam_m * ym))
-            
+
             fun_y = lambda y_val: C3m * np.sinh(gam_m * y_val) + C4m * np.sinh(gam_m * (y_val - ym))
-            Tansup += fun_y(ym) * np.sin(lam_m * x_g_vec)
-            Taninf += fun_y(0) * np.sin(lam_m * x_g_vec)
-            Tansx += fun_y(y_g_vec) * np.sin(lam_m * 0)
-            Tandx += fun_y(y_g_vec) * np.sin(lam_m * xm)
-            
-    # 3. Contributo Ohmico
-    for i in range(1, n + 1):
-        alfa = i * np.pi / xm
-        somma_x = np.sum(np.cos(alfa * cellex[l_idx+1]) - np.cos(alfa * cellex[l_idx]))
-        for j in range(1, m + 1):
-            beta = j * np.pi / ym
-            somma_y = np.sum(np.cos(beta * celley[v_idx+1]) - np.cos(beta * celley[v_idx]))
-            soluzioneintegrale = somma_x * somma_y
-            den = (Ut + kT * (alfa**2 + beta**2)) * alfa * beta
-            molt_ohm = (costante_molt / den) * soluzioneintegrale * qohm
-            
-            Tansup += molt_ohm * (np.sin(alfa * x_g_vec) * np.sin(beta * ym))
-            Taninf += molt_ohm * (np.sin(alfa * x_g_vec) * np.sin(beta * 0))
-            Tansx += molt_ohm * (np.sin(alfa * 0) * np.sin(beta * y_g_vec))
-            Tandx += molt_ohm * (np.sin(alfa * xm) * np.sin(beta * y_g_vec))
-            
-    return Tansup, Taninf, Tansx, Tandx
+
+            tansup_rob += fun_y(y2) * np.sin(lam_m * x_c)
+            taninf_rob += fun_y(y1) * np.sin(lam_m * x_c)
+            tansx_rob += fun_y(y_c) * np.sin(lam_m * x1)
+            tandx_rob += fun_y(y_c) * np.sin(lam_m * x2)
+
+    tansup = tansupsol + tansupohm + tansup_rob
+    taninf = taninfsol + taninfohm + taninf_rob
+    tansx = tansxsol + tansxohm + tansx_rob
+    tandx = tandxsol + tandxohm + tandx_rob
+
+    return tansup, taninf, tansx, tandx
 
 @st.cache_data
 def calcola_soluzione_analitica_globale(xg, yg, Sole, cellex, celley, xm, ym, n, m, Uk, Ut, h, Ta, kT, qohm, dx_m, dy_m, kTT):
@@ -140,6 +202,125 @@ def calcola_soluzione_analitica_globale(xg, yg, Sole, cellex, celley, xm, ym, n,
     Tan = Tsol + Tohm + Trobin + Ta - 273.15
     return Tan
 
+
+def interpola_univoca(x, y, x_new, left=np.nan, right=np.nan):
+    ordine = np.argsort(x)
+    x_ord = np.asarray(x)[ordine]
+    y_ord = np.asarray(y)[ordine]
+    x_unique, idx_unique = np.unique(x_ord, return_index=True)
+    y_unique = y_ord[idx_unique]
+
+    if len(x_unique) < 2:
+        return np.full_like(x_new, y_unique[0] if len(y_unique) else 0.0, dtype=float)
+
+    return np.interp(x_new, x_unique, y_unique, left=left, right=right)
+
+
+def calcola_corrente_modulo_iv(T_celle_C, irradianza, ncx, ncy, celle_oscurate, fattore_sole):
+    q = 1.60218e-19
+    k_b = 1.3800e-23
+    T_STC = 25.0
+    G_STC = 1e3
+    Voc = 40.3 / 60
+    alpha = 0.06
+    Ns = 1
+
+    energy_gap_STC = 1.121 * q
+    coeff_Iph = 9.0
+    coeff_I0 = 1.97e-9
+    coeff_n = 1.49
+    coeff_n_G = 1.13e-4
+    coeff_n_T = -1.39e-3
+    coeff_Rs = 3.667e-3
+    coeff_Rs_beta = 0.07
+    coeff_Rsh = 17.2
+
+    n_points = 1000
+    T_new = np.asarray(T_celle_C, dtype=float).reshape(-1)
+    n_cells_total = T_new.size
+    if n_cells_total == 0:
+        return 0.0, np.array([]), np.array([])
+
+    irradiance = np.ones(n_cells_total) * irradianza
+    if celle_oscurate:
+        for riga, colonna in celle_oscurate:
+            idx = (int(riga) - 1) * int(ncx) + (int(colonna) - 1)
+            if 0 <= idx < n_cells_total:
+                irradiance[idx] = fattore_sole * irradianza
+
+    stringhe = [idx for idx in np.array_split(np.arange(n_cells_total), 3) if len(idx) > 0]
+    I_cells = np.zeros((n_points, n_cells_total))
+    V_cells = np.zeros((n_points, n_cells_total))
+
+    energy_gap = lambda T: energy_gap_STC * (1 - 2.677e-4 * (T - 273.15 - T_STC))
+    Iph_all = coeff_Iph * (1 + alpha / 100 * (T_new - T_STC)) * irradiance / G_STC
+    Iph_limit = [np.min(Iph_all[indici]) for indici in stringhe]
+    V_cell = np.linspace(0, Voc * 1.1, n_points)
+
+    for numero_stringa, indici_stringa in enumerate(stringhe):
+        for cell_idx in indici_stringa:
+            irr_model = max(float(irradiance[cell_idx]), 1e-9)
+            temperatura = T_new[cell_idx] + 273.15
+            Vt = k_b * temperatura / q
+
+            Iph = coeff_Iph * (1 + alpha / 100 * (temperatura - 273.15 - T_STC)) * irr_model / G_STC
+            Iph = min(Iph, Iph_limit[numero_stringa])
+            I0 = coeff_I0 * (temperatura / (T_STC + 273.15)) ** (1 / 3) * np.exp(
+                ((energy_gap_STC / (T_STC + 273.15)) - energy_gap(temperatura) / temperatura) / k_b
+            )
+            n = coeff_n + coeff_n_T * temperatura + coeff_n_G * irr_model
+            Rs = coeff_Rs * temperatura / (T_STC + 273.15) * (1 - coeff_Rs_beta * np.log(irr_model / G_STC))
+            Rh = coeff_Rsh * G_STC / irr_model
+
+            arg = Rs * Rh * I0 / Ns**2 * np.exp(
+                Rh / Ns * (Rs * Iph + Rs * I0 + V_cell) / Ns / (n * Vt * (Rs + Rh) / Ns)
+            )
+            W = np.real(lambertw(arg))
+            I_cell = (
+                -V_cell / Rs
+                + n * Vt * Ns / Rs
+                * (
+                    -W / n / Vt / (Rs + Rh) * Ns
+                    + Rh / Ns * (Rs * Iph + Rs * I0 + V_cell) / Ns / (n * Vt * (Rs + Rh) / Ns)
+                )
+            )
+
+            V_cells[:, cell_idx] = V_cell
+            I_cells[:, cell_idx] = np.real(I_cell)
+
+    I_stringhe = []
+    V_stringhe = []
+
+    for indici_stringa in stringhe:
+        Isc_cells = np.max(I_cells[:, indici_stringa], axis=0)
+        idx_ref = indici_stringa[int(np.argmin(Isc_cells))]
+        I_ref = I_cells[:, idx_ref]
+        V_tot = np.zeros_like(I_ref)
+
+        for cell_idx in indici_stringa:
+            V_interp = interpola_univoca(I_cells[:, cell_idx], V_cells[:, cell_idx], I_ref)
+            V_tot += np.nan_to_num(V_interp, nan=0.0)
+
+        I_stringhe.append(I_ref)
+        V_stringhe.append(V_tot)
+
+    max_corrente = max(float(np.nanmax(I_str)) for I_str in I_stringhe)
+    I_mod_clean = np.linspace(0, max_corrente, 2000)
+    V_mod_clean = np.zeros_like(I_mod_clean)
+
+    for I_str, V_str in zip(I_stringhe, V_stringhe):
+        V_mod_clean += np.nan_to_num(interpola_univoca(I_str, V_str, I_mod_clean, left=0.0, right=0.0), nan=0.0)
+
+    sort_idx = np.argsort(V_mod_clean)
+    V_mod_clean = V_mod_clean[sort_idx]
+    I_mod_clean = I_mod_clean[sort_idx]
+    P_module = I_mod_clean * V_mod_clean
+    idx_mpp = int(np.nanargmax(P_module))
+    Impp_module = float(I_mod_clean[idx_mpp])
+
+    return Impp_module, V_mod_clean, I_mod_clean
+
+
 def vettore_sorgente(Nx, Ny, S, kT):
     dim = (Nx - 1) * (Ny - 1)
     qv = np.zeros(dim)
@@ -152,7 +333,7 @@ def vettore_sorgente(Nx, Ny, S, kT):
 @st.cache_data
 def esegui_simulazione_completa(p):
     xm, ym = p['xm'], p['ym']
-    ncx, ncy = p['ncx'], p['ncy']
+    ncx, ncy = int(p['ncx']), int(p['ncy'])
     
     xc = (xm - 2*p['s_bord_lr'] - (ncx-1)*p['s_cell_x']) / ncx
     yc = (ym - p['s_bord_t'] - p['s_bord_b'] - (ncy-1)*p['s_cell_y']) / ncy
@@ -183,7 +364,7 @@ def esegui_simulazione_completa(p):
     y_g_vec = np.linspace(0, ym, p['ny_res'] + 1)
     xg, yg = np.meshgrid(x_g_vec, y_g_vec)
     
-    Nx, Ny = p['Nx_cella'], p['Ny_cella']
+    Nx, Ny = int(p['Nx_cella']), int(p['Ny_cella'])
     dx, dy = xc / Nx, yc / Ny
     dim = (Nx - 1) * (Ny - 1)
     
@@ -193,64 +374,102 @@ def esegui_simulazione_completa(p):
     ds[0::Ny-1] = 0
     di[Ny-2::Ny-1] = 0
     A = sp.diags([e/dx**2, di, (-2/dx**2 - 2/dy**2 - Ut/kT)*e, ds, e/dx**2], [-(Ny-1), -1, 0, 1, (Ny-1)], shape=(dim, dim), format='csc')
+    risolvi_A = spla.factorized(A)
     
-    eta = p['eta_STC']
-    err, iii = 1, 0
-    I = 0
-    qohm = Rv * I**2 / (Ac * mod_thick)
-    
-    while err > p['toll'] and iii < p['itmax']:
-        Sole = QSOL * np.ones_like(xg) * (1 - eta)
-        
-        if p['ombra_attiva'] and p['celle_oscurate']:
-            for (r_o, c_o) in p['celle_oscurate']:
-                ixi = np.searchsorted(x_g_vec, iniziocx[c_o-1])
-                fxi = np.searchsorted(x_g_vec, finecx[c_o-1])
-                iyi = np.searchsorted(y_g_vec, iniziocy[r_o-1])
-                fyi = np.searchsorted(y_g_vec, finecy[r_o-1])
-                Sole[iyi:fyi, ixi:fxi] = p['fattore_sole'] * QSOL * (1 - eta)
-            
-        interpolator_sole = RegularGridInterpolator((y_g_vec, x_g_vec), Sole, bounds_error=False, fill_value=None)
-        
-        # Passaggio di kTT alla funzione
-        Tansup_g, Taninf_g, Tansx_g, Tandx_g = calcola_somme_fourier(
-            x_g_vec, y_g_vec, cellex, celley, xm, ym, p['n_f'], p['m_f'], Uk, Ut, p['h'], Ta, kT, qohm, p['kTT'])
-        
-        Tm_max_iter = 0
-        for i_cell in range(ncx * ncy):
-            riga, colonna = int(i_cell / ncx), i_cell % ncx
-            x_c = np.linspace(cellex[2*colonna], cellex[2*colonna+1], Nx+1)
-            y_c = np.linspace(celley[2*riga], celley[2*riga+1], Ny+1)
-            
-            TFSUP = np.interp(x_c, x_g_vec, Tansup_g)
-            TFINF = np.interp(x_c, x_g_vec, Taninf_g)
-            TFSX  = np.interp(y_c, y_g_vec, Tansx_g)
-            TFDX  = np.interp(y_c, y_g_vec, Tandx_g)
-            
-            b = np.zeros(dim)
-            b[Ny-2::Ny-1] += -(TFSUP[1:-1]) / dy**2
-            b[0::Ny-1] += -(TFINF[1:-1]) / dy**2
-            b[(Nx-2)*(Ny-1):] += -(TFDX[1:-1]) / dx**2
-            b[:Ny-1] += -(TFSX[1:-1]) / dx**2
-            
-            X_sing, Y_sing = np.meshgrid(x_c, y_c)
-            pts = np.array([Y_sing.ravel(), X_sing.ravel()]).T
-            Ssol = interpolator_sole(pts).reshape(Ny+1, Nx+1)[1:-1, 1:-1]
-            
-            qv = vettore_sorgente(Nx, Ny, Ssol + qohm, kT)
-            T_interna = spla.spsolve(A, (b - qv)).reshape((Ny-1, Nx-1))
-            Tm_max_iter = max(Tm_max_iter, np.max(T_interna) + p['Ta_C'])
-            
-        deltaT = Tm_max_iter - 25.0
-        eta_new = p['eta_STC'] * (1 + p['gamma'] * deltaT)
-        Impr = p['Imp'] * (1 + p['alfaimp'] * deltaT)
-        qohm = Rv * Impr**2 / (Ac * mod_thick)
-        err = abs(eta_new - eta)
-        eta = eta_new
-        iii += 1
-        
     dx_m = x_g_vec[1] - x_g_vec[0]
     dy_m = y_g_vec[1] - y_g_vec[0]
+
+    x_celle = [np.linspace(cellex[2 * c], cellex[2 * c + 1], Nx + 1) for c in range(ncx)]
+    y_celle = [np.linspace(celley[2 * r], celley[2 * r + 1], Ny + 1) for r in range(ncy)]
+
+    eta = p['eta_STC']
+    err, iii = 1.0, 0
+    Impr = p['Imp']
+    qohm = 0.0
+    Sole = QSOL * np.ones_like(xg) * (1 - eta)
+
+    num_celle = ncx * ncy
+    Tsup_prec = np.ones((num_celle, Nx + 1))
+    Tinf_prec = np.ones((num_celle, Nx + 1))
+    Tsx_prec = np.ones((num_celle, Ny + 1))
+    Tdx_prec = np.ones((num_celle, Ny + 1))
+
+    def errore_relativo(nuovo, vecchio):
+        denom = np.maximum(np.abs(vecchio), 1e-12)
+        return np.max(np.abs(vecchio - nuovo) / denom)
+
+    while err > p['toll'] and iii < p['itmax']:
+        Sole = QSOL * np.ones_like(xg) * (1 - eta)
+
+        if p['ombra_attiva'] and p['celle_oscurate']:
+            for (r_o, c_o) in p['celle_oscurate']:
+                ixi = np.searchsorted(x_g_vec, iniziocx[c_o - 1])
+                fxi = np.searchsorted(x_g_vec, finecx[c_o - 1])
+                iyi = np.searchsorted(y_g_vec, iniziocy[r_o - 1])
+                fyi = np.searchsorted(y_g_vec, finecy[r_o - 1])
+                Sole[iyi:fyi, ixi:fxi] = p['fattore_sole'] * QSOL * (1 - eta)
+
+        termini_bordi = prepara_termini_fourier(
+            Sole, xg, yg, cellex, celley, xm, ym, int(p['n_bordi']), int(p['m_bordi']), Ut, kT, dx_m, dy_m
+        )
+        interpolator_sole = RegularGridInterpolator((y_g_vec, x_g_vec), Sole, bounds_error=False, fill_value=None)
+
+        Tansup = np.zeros_like(Tsup_prec)
+        Taninf = np.zeros_like(Tinf_prec)
+        Tansx = np.zeros_like(Tsx_prec)
+        Tandx = np.zeros_like(Tdx_prec)
+
+        for i_cell in range(num_celle):
+            riga, colonna = int(i_cell / ncx), i_cell % ncx
+            Tansup[i_cell], Taninf[i_cell], Tansx[i_cell], Tandx[i_cell] = calcola_bordi_cella_analitici(
+                x_celle[colonna], y_celle[riga], termini_bordi, xm, ym, Uk, p['h'], Ta, qohm, p['kTT']
+            )
+
+        err = max(
+            errore_relativo(Tansup, Tsup_prec),
+            errore_relativo(Taninf, Tinf_prec),
+            errore_relativo(Tansx, Tsx_prec),
+            errore_relativo(Tandx, Tdx_prec),
+        )
+        Tsup_prec, Tinf_prec, Tsx_prec, Tdx_prec = Tansup, Taninf, Tansx, Tandx
+
+        Tm = np.zeros(num_celle)
+        Tmedio = np.zeros(num_celle)
+        for i_cell in range(num_celle):
+            riga, colonna = int(i_cell / ncx), i_cell % ncx
+            x_c = x_celle[colonna]
+            y_c = y_celle[riga]
+
+            TFSUP = Tansup[i_cell]
+            TFINF = Taninf[i_cell]
+            TFSX = Tansx[i_cell]
+            TFDX = Tandx[i_cell]
+
+            b = np.zeros(dim)
+            b[Ny - 2::Ny - 1] += -(TFSUP[1:-1]) / dy**2
+            b[0::Ny - 1] += -(TFINF[1:-1]) / dy**2
+            b[(Nx - 2) * (Ny - 1):] += -(TFDX[1:-1]) / dx**2
+            b[:Ny - 1] += -(TFSX[1:-1]) / dx**2
+
+            X_sing, Y_sing = np.meshgrid(x_c, y_c)
+            pts = np.array([Y_sing.ravel(), X_sing.ravel()]).T
+            Ssol = interpolator_sole(pts).reshape(Ny + 1, Nx + 1)[1:-1, 1:-1].T
+
+            qv = vettore_sorgente(Nx, Ny, Ssol + qohm, kT)
+            T_interna = risolvi_A(b - qv).reshape((Ny - 1, Nx - 1), order='F')
+            T_full = np.vstack((TFINF[1:-1], T_interna, TFSUP[1:-1]))
+            T_full = np.column_stack((TFSX, T_full, TFDX))
+
+            Tm[i_cell] = np.max(T_full)
+            Tmedio[i_cell] = np.mean(T_full)
+
+        deltaT = np.max(Tmedio) + p['Ta_C'] - 25.0
+        Impr, _, _ = calcola_corrente_modulo_iv(
+            Tmedio + p['Ta_C'], p['GSTC'], ncx, ncy, p['celle_oscurate'], p['fattore_sole']
+        )
+        eta = p['eta_STC'] * (1 + p['gamma'] * deltaT)
+        qohm = Rv * Impr**2 / (Ac * mod_thick)
+        iii += 1
     
     # Passaggio di kTT alla funzione
     Tan = calcola_soluzione_analitica_globale(xg, yg, Sole, cellex, celley, xm, ym, p['n_f'], p['m_f'], Uk, Ut, p['h'], Ta, kT, qohm, dx_m, dy_m, p['kTT'])
@@ -285,20 +504,20 @@ with st.sidebar.expander("🧱 Layer Stratigrafia", expanded=False):
     kTT = st.number_input("kTT: Conducibilità Equivalente Bordi [W/mK]", value=200.0) # NUOVO PARAMETRO
 
 with st.sidebar.expander("🔌 Parametri Elettrici", expanded=False):
-    Isc = st.number_input("Isc: Corrente cc [A]", value=11.05)
+    Isc = st.number_input("Isc: Corrente cc [A]", value=9.91)
     Rs = st.number_input("Rs: Resistenza serie [Ohm]", value=3.8e-3, format="%.5f")
     eta_STC = st.number_input("eta_STC", value=0.19)
-    Imp = st.number_input("Imp: [A]", value=11.05)
-    alfaimp = st.number_input("alfaimp", value=-0.03/100, format="%.6f")
-    gamma = st.number_input("gamma", value=-0.005, format="%.5f")
+    Imp = st.number_input("Imp: [A]", value=9.91)
+    alfaimp = st.number_input("alfaimp", value=0.06/100, format="%.6f")
+    gamma = st.number_input("gamma", value=-0.0038, format="%.5f")
 
 with st.sidebar.expander("🌍 Condizioni Operative", expanded=False):
-    vento = st.number_input("Vento [m/s]", value=5.0)
+    vento = st.number_input("Vento [m/s]", value=4.0)
     Ta_C = st.number_input("Ta Ambiente [°C]", value=31.0)
     GSTC = st.number_input("GSTC [W/m²]", value=1000)
     mod_thick = st.number_input("Spessore totale [m]", value=0.01, format="%.3f")
-    U0 = st.number_input("U0", value=33.0)
-    U1 = st.number_input("U1", value=7.0)
+    U0 = st.number_input("U0", value=8.0)
+    U1 = st.number_input("U1", value=5.0)
 
 with st.sidebar.expander("🌫️ Ombreggiamento MULTIPLO", expanded=False):
     ombra_attiva = st.checkbox("Attiva Ombra", value=True)
@@ -329,12 +548,16 @@ with st.sidebar.expander("🌫️ Ombreggiamento MULTIPLO", expanded=False):
         fattore_sole = 1.0
 
 with st.sidebar.expander("🔄 Risoluzione", expanded=False):
-    n_fourier = st.number_input("n_fourier", value=100)
-    m_fourier = st.number_input("m_fourier", value=100)
+    n_bordi = st.number_input("n_fourier_bordi", value=25, step=1)
+    m_bordi = st.number_input("m_fourier_bordi", value=25, step=1)
+    n_fourier = st.number_input("n_fourier_globale", value=100, step=1)
+    m_fourier = st.number_input("m_fourier_globale", value=100, step=1)
     itmax = st.number_input("Iterazioni max", value=20)
     toll = st.number_input("Tolleranza", value=1e-6, format="%.1e")
-    nx_res = st.number_input("Mesh X", value=80)
+    nx_res = st.number_input("Mesh X", value=60)
     ny_res = st.number_input("Mesh Y", value=70)
+    Nx_cella = st.number_input("Mesh cella X", value=80, step=1)
+    Ny_cella = st.number_input("Mesh cella Y", value=90, step=1)
 
 with st.sidebar.expander("🎨 Aspetto Grafici", expanded=False):
     tema_scuro = st.checkbox("Usa sfondo scuro per i grafici", value=False)
@@ -359,7 +582,29 @@ with col_btn:
 if esegui:
     with st.spinner("Calcolo integrale Analitico su tutto il pannello in corso..."):
         
-        p = {'xm':x_m,'ym':y_m,'s_bord_b':sb_b,'s_bord_t':sb_t,'s_bord_lr':sb_lr,'s_cell_y':sc_y,'s_cell_x':sc_x,'ncx':ncx,'ncy':ncy,'kglass':kglass,'sglass':sglass,'keva':keva,'seva':seva,'kpv':kpv,'spv':spv,'kted':kted,'sted':sted,'kTT':kTT,'Isc':Isc,'Rs':Rs,'eta_STC':eta_STC,'Imp':Imp,'alfaimp':alfaimp,'gamma':gamma,'vento':vento,'Ta_C':Ta_C,'GSTC':GSTC,'mod_thick':mod_thick,'U0':U0,'U1':U1,'ombra_attiva':ombra_attiva,'celle_oscurate':celle_oscurate,'fattore_sole':fattore_sole,'n_f':n_fourier,'m_f':m_fourier,'itmax':itmax,'toll':toll,'Nx_cella':20,'Ny_cella':20,'nx_res':nx_res,'ny_res':ny_res}
+        p = {
+            'xm': x_m, 'ym': y_m,
+            's_bord_b': sb_b, 's_bord_t': sb_t, 's_bord_lr': sb_lr,
+            's_cell_y': sc_y, 's_cell_x': sc_x,
+            'ncx': ncx, 'ncy': ncy,
+            'kglass': kglass, 'sglass': sglass,
+            'keva': keva, 'seva': seva,
+            'kpv': kpv, 'spv': spv,
+            'kted': kted, 'sted': sted,
+            'kTT': kTT,
+            'Isc': Isc, 'Rs': Rs, 'eta_STC': eta_STC,
+            'Imp': Imp, 'alfaimp': alfaimp, 'gamma': gamma,
+            'vento': vento, 'Ta_C': Ta_C, 'GSTC': GSTC,
+            'mod_thick': mod_thick, 'U0': U0, 'U1': U1,
+            'ombra_attiva': ombra_attiva,
+            'celle_oscurate': celle_oscurate,
+            'fattore_sole': fattore_sole,
+            'n_bordi': n_bordi, 'm_bordi': m_bordi,
+            'n_f': n_fourier, 'm_f': m_fourier,
+            'itmax': itmax, 'toll': toll,
+            'Nx_cella': Nx_cella, 'Ny_cella': Ny_cella,
+            'nx_res': nx_res, 'ny_res': ny_res,
+        }
         p['h'] = 2.8 + 3 * vento
         
         xg, yg, Tan, Tmaxan, eta, Impr, iterazioni, kT_calc = esegui_simulazione_completa(p)
